@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { fetchSettings, updateSettings, Settings } from '@/lib/api';
+import { fetchSettings, updateSettings, fetchRuns, Settings, CrawlRun } from '@/lib/api';
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -10,12 +10,18 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [runs, setRuns] = useState<CrawlRun[]>([]);
+  const [runsLoading, setRunsLoading] = useState(true);
+  const [runsError, setRunsError] = useState<string | null>(null);
   
   const [newKeyword, setNewKeyword] = useState('');
   const [newLocation, setNewLocation] = useState('');
+  const [newBoardName, setNewBoardName] = useState('');
+  const [newBoardUrl, setNewBoardUrl] = useState('');
 
   useEffect(() => {
     loadSettings();
+    loadRuns();
   }, []);
 
   const loadSettings = async () => {
@@ -28,6 +34,20 @@ export default function SettingsPage() {
       console.error('Error loading settings:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadRuns = async () => {
+    try {
+      setRunsLoading(true);
+      setRunsError(null);
+      const data = await fetchRuns({ limit: 10 });
+      setRuns(data);
+    } catch (err) {
+      setRunsError('Failed to load recent runs');
+      console.error('Error loading runs:', err);
+    } finally {
+      setRunsLoading(false);
     }
   };
 
@@ -95,6 +115,27 @@ export default function SettingsPage() {
         ...settings.sources,
         [source]: !settings.sources[source]
       }
+    });
+  };
+
+  const addBoard = () => {
+    if (!settings) return;
+    if (!newBoardUrl.trim()) return;
+    const name = newBoardName.trim() || newBoardUrl.trim();
+    const board = { name, board_url: newBoardUrl.trim() };
+    setSettings({
+      ...settings,
+      greenhouse_boards: [...(settings.greenhouse_boards || []), board],
+    });
+    setNewBoardName('');
+    setNewBoardUrl('');
+  };
+
+  const removeBoard = (boardUrl: string) => {
+    if (!settings) return;
+    setSettings({
+      ...settings,
+      greenhouse_boards: (settings.greenhouse_boards || []).filter((b) => b.board_url !== boardUrl),
     });
   };
 
@@ -249,6 +290,57 @@ export default function SettingsPage() {
           </div>
 
           <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Greenhouse Boards</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Manage company boards without editing environment variables.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+              <input
+                type="text"
+                placeholder="Board name (optional)"
+                value={newBoardName}
+                onChange={(e) => setNewBoardName(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+              />
+              <input
+                type="url"
+                placeholder="Board URL (https://boards.greenhouse.io/...)"
+                value={newBoardUrl}
+                onChange={(e) => setNewBoardUrl(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+              />
+              <button
+                onClick={addBoard}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                disabled={!newBoardUrl.trim()}
+              >
+                Add Board
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {(settings.greenhouse_boards || []).map((board, idx) => (
+                <div key={`${board.board_url}-${idx}`} className="flex items-center justify-between border border-gray-200 rounded-md px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{board.name}</p>
+                    <p className="text-xs text-gray-600">{board.board_url}</p>
+                  </div>
+                  <button
+                    onClick={() => removeBoard(board.board_url)}
+                    className="text-sm text-red-600 hover:text-red-800"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              {(settings.greenhouse_boards || []).length === 0 && (
+                <p className="text-sm text-gray-600">No boards configured.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">Crawl Schedule</h2>
             <p className="text-sm text-gray-600 mb-4">
               Set the time for daily automatic job crawling.
@@ -287,6 +379,70 @@ export default function SettingsPage() {
             <p className="mt-2 text-sm text-gray-500">
               Daily crawl will run at {settings.crawl_hour.toString().padStart(2, '0')}:{settings.crawl_minute.toString().padStart(2, '0')}
             </p>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Recent Runs</h2>
+                <p className="text-sm text-gray-600">Last 10 crawls with outcomes</p>
+              </div>
+              <button
+                onClick={loadRuns}
+                className="px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {runsError && (
+              <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                {runsError}
+              </div>
+            )}
+
+            {runsLoading ? (
+              <div className="flex justify-center items-center py-6">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+              </div>
+            ) : runs.length === 0 ? (
+              <p className="text-sm text-gray-600">No crawl history yet.</p>
+            ) : (
+              <div className="space-y-4">
+                {runs.map((run) => (
+                  <div key={run.run_id} className="border border-gray-200 rounded-lg p-4">
+                    <div className="flex flex-wrap justify-between gap-4">
+                      <div>
+                        <p className="text-sm text-gray-500">
+                          Started {new Date(run.started_at).toLocaleString()}
+                        </p>
+                        <p className="text-lg font-semibold text-gray-900">
+                          {run.inserted_new_count} new / {run.fetched_count} fetched
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          Duration: {run.duration_ms ? `${Math.round(run.duration_ms / 1000)}s` : '—'}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm text-gray-600">
+                          Sources: {run.sources_succeeded.length} ok / {run.sources_failed.length} failed
+                        </p>
+                        {run.sources_failed.length > 0 && (
+                          <p className="text-sm text-red-600 mt-1">
+                            {run.sources_failed.map((f) => f.source).join(', ')}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    {run.errors_summary && (
+                      <p className="mt-2 text-sm text-red-700 bg-red-50 px-2 py-1 rounded">
+                        {run.errors_summary}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-3">

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>WeWorkRemotely Programming Jobs</title>
+    <link>https://weworkremotely.com/categories/remote-programming-jobs</link>
+    <description>Sample feed for testing</description>
+    <item>
+      <title>Acme Corp: Senior Python Engineer</title>
+      <link>https://weworkremotely.com/remote-jobs/acme-corp-senior-python-engineer</link>
+      <pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Build APIs and services.</p>]]></description>
+    </item>
+  </channel>
+</rss>

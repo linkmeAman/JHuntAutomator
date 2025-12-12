@@ -32,6 +32,7 @@ export interface Settings {
   keywords: string[];
   locations: string[];
   sources: Record<string, boolean>;
+  greenhouse_boards: { name: string; board_url: string }[];
   crawl_hour: number;
   crawl_minute: number;
 }
@@ -48,6 +49,19 @@ export interface Stats {
   applied_jobs: number;
   pending_jobs: number;
   sources: Record<string, number>;
+}
+
+export interface CrawlRun {
+  run_id: string;
+  started_at: string;
+  finished_at?: string;
+  duration_ms?: number;
+  sources_attempted: string[];
+  sources_succeeded: string[];
+  sources_failed: { source: string; error: string }[];
+  fetched_count: number;
+  inserted_new_count: number;
+  errors_summary?: string;
 }
 
 export const fetchJobs = async (params?: {
@@ -88,5 +102,15 @@ export const updateSettings = async (settings: Settings): Promise<Settings> => {
 
 export const fetchStats = async (): Promise<Stats> => {
   const response = await api.get('/api/stats');
+  return response.data;
+};
+
+export const fetchRuns = async (params?: { limit?: number; offset?: number }): Promise<CrawlRun[]> => {
+  const response = await api.get('/api/runs', { params });
+  return response.data;
+};
+
+export const fetchRun = async (runId: string): Promise<CrawlRun> => {
+  const response = await api.get(`/api/runs/${runId}`);
   return response.data;
 };

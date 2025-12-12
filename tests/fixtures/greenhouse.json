@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "title": "Backend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/example/jobs/123",
+      "location": { "name": "Remote" },
+      "content": "<p>Build APIs and services.</p>",
+      "updated_at": "2024-01-01T00:00:00Z",
+      "company": { "name": "ExampleCo" }
+    }
+  ]
+}

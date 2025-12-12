@@ -2,7 +2,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import logging
 import json
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -12,38 +11,18 @@ def scheduled_crawl(app):
     """Function to run scheduled job crawl"""
     logger.info("Starting scheduled job crawl...")
     
+    from .crawl_runner import execute_crawl
     from .database import SessionLocal
-    from .models import Settings as SettingsModel, Job
-    from .crawler import JobCrawler
-    from .config import settings
     
     db = SessionLocal()
     try:
-        keywords_setting = db.query(SettingsModel).filter(SettingsModel.key == "keywords").first()
-        locations_setting = db.query(SettingsModel).filter(SettingsModel.key == "locations").first()
-        sources_setting = db.query(SettingsModel).filter(SettingsModel.key == "sources").first()
-        
-        keywords = json.loads(keywords_setting.value) if keywords_setting else settings.DEFAULT_KEYWORDS
-        locations = json.loads(locations_setting.value) if locations_setting else settings.DEFAULT_LOCATIONS
-        sources = json.loads(sources_setting.value) if sources_setting else settings.JOB_SOURCES
-        
-        crawler = JobCrawler(keywords, locations, max_jobs=settings.MAX_JOBS_PER_SOURCE)
-        jobs_found = crawler.crawl_all_sources(sources)
-        
-        jobs_added = 0
-        for job_data in jobs_found:
-            existing_job = db.query(Job).filter(Job.job_hash == job_data.job_hash).first()
-            if not existing_job:
-                new_job = Job(**job_data.dict())
-                db.add(new_job)
-                jobs_added += 1
-        
-        db.commit()
-        logger.info(f"Scheduled crawl complete: {len(jobs_found)} found, {jobs_added} new jobs added")
-        
+        result = execute_crawl(db, send_notifications=True)
+        logger.info(
+            "Scheduled crawl complete: %s",
+            result.message,
+        )
     except Exception as e:
         logger.error(f"Error during scheduled crawl: {e}")
-        db.rollback()
     finally:
         db.close()
 

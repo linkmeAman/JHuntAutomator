@@ -22,6 +22,9 @@ wheels/
 MANIFEST
 .pytest_cache/
 .pythonlibs/
+.coverage
+.coverage.*
+htmlcov/
 
 # Database
 *.db
@@ -68,9 +71,12 @@ Thumbs.db
 # Temporary files
 *.tmp
 .cache/
+tmp/
 
 # Replit
 .upm/
 .config/
 .pythonlibs/
 venv/
+.venv/
+.local

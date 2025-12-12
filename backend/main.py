@@ -1,17 +1,17 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from typing import List, Optional
 import json
 import logging
 
 from .database import get_db, init_db
-from .models import Job, Settings as SettingsModel
-from .schemas import JobResponse, JobUpdate, SettingsSchema, CrawlResult
-from .crawler import JobCrawler
+from .models import CrawlRun, Job, Settings as SettingsModel
+from .schemas import JobResponse, JobUpdate, SettingsSchema, CrawlResult, CrawlRunSchema
 from .config import settings
 from .scheduler import start_scheduler
+from .crawl_runner import execute_crawl
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,10 +34,41 @@ async def startup_event():
     db = next(get_db())
     try:
         init_default_settings(db)
-        start_scheduler(app)
-        logger.info("Scheduler started")
+        start_scheduler_if_configured(app)
     finally:
         db.close()
+
+
+def start_scheduler_if_configured(app):
+    """Start scheduler only when configured for server mode."""
+    mode = settings.CRAWL_MODE.lower()
+    if mode == "server":
+        start_scheduler(app)
+        logger.info("Scheduler started (mode=server)")
+    else:
+        logger.info("Scheduler not started (mode=%s)", mode)
+
+
+def _deserialize_json_field(value: str | None, default):
+    try:
+        return json.loads(value) if value else default
+    except Exception:
+        return default
+
+
+def _serialize_run(run: CrawlRun) -> CrawlRunSchema:
+    return CrawlRunSchema(
+        run_id=run.run_id,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        duration_ms=run.duration_ms,
+        sources_attempted=_deserialize_json_field(run.sources_attempted, []),
+        sources_succeeded=_deserialize_json_field(run.sources_succeeded, []),
+        sources_failed=_deserialize_json_field(run.sources_failed, []),
+        fetched_count=run.fetched_count,
+        inserted_new_count=run.inserted_new_count,
+        errors_summary=run.errors_summary,
+    )
 
 def init_default_settings(db: Session):
     """Initialize default settings if they don't exist"""
@@ -58,7 +89,12 @@ def init_default_settings(db: Session):
         db.add(locations_setting)
     
     sources_setting = db.query(SettingsModel).filter(SettingsModel.key == "sources").first()
-    if not sources_setting:
+    if sources_setting and sources_setting.value:
+        stored_sources = json.loads(sources_setting.value)
+        merged_sources = settings.JOB_SOURCES.copy()
+        merged_sources.update(stored_sources)
+        sources_setting.value = json.dumps(merged_sources)
+    else:
         sources_setting = SettingsModel(
             key="sources",
             value=json.dumps(settings.JOB_SOURCES)
@@ -72,6 +108,20 @@ def init_default_settings(db: Session):
             value=json.dumps({"hour": settings.CRAWL_SCHEDULE_HOUR, "minute": settings.CRAWL_SCHEDULE_MINUTE})
         )
         db.add(schedule_setting)
+
+    greenhouse_setting = db.query(SettingsModel).filter(SettingsModel.key == "greenhouse_boards").first()
+    if greenhouse_setting and greenhouse_setting.value:
+        try:
+            stored_boards = json.loads(greenhouse_setting.value)
+        except Exception:
+            stored_boards = settings.GREENHOUSE_BOARDS
+        greenhouse_setting.value = json.dumps(stored_boards or settings.GREENHOUSE_BOARDS)
+    else:
+        greenhouse_setting = SettingsModel(
+            key="greenhouse_boards",
+            value=json.dumps(settings.GREENHOUSE_BOARDS)
+        )
+        db.add(greenhouse_setting)
     
     db.commit()
 
@@ -135,39 +185,39 @@ async def update_job(job_id: int, job_update: JobUpdate, db: Session = Depends(g
 async def rescan_jobs(db: Session = Depends(get_db)):
     """Manually trigger job crawling"""
     try:
-        keywords_setting = db.query(SettingsModel).filter(SettingsModel.key == "keywords").first()
-        locations_setting = db.query(SettingsModel).filter(SettingsModel.key == "locations").first()
-        sources_setting = db.query(SettingsModel).filter(SettingsModel.key == "sources").first()
-        
-        keywords = json.loads(keywords_setting.value) if keywords_setting else settings.DEFAULT_KEYWORDS
-        locations = json.loads(locations_setting.value) if locations_setting else settings.DEFAULT_LOCATIONS
-        sources = json.loads(sources_setting.value) if sources_setting else settings.JOB_SOURCES
-        
-        crawler = JobCrawler(keywords, locations, max_jobs=settings.MAX_JOBS_PER_SOURCE)
-        jobs_found = crawler.crawl_all_sources(sources)
-        
-        jobs_added = 0
-        for job_data in jobs_found:
-            existing_job = db.query(Job).filter(Job.job_hash == job_data.job_hash).first()
-            if not existing_job:
-                new_job = Job(**job_data.dict())
-                db.add(new_job)
-                jobs_added += 1
-        
-        db.commit()
-        
-        logger.info(f"Crawl complete: {len(jobs_found)} found, {jobs_added} new jobs added")
-        
-        return CrawlResult(
-            status="success",
-            jobs_found=len(jobs_found),
-            jobs_added=jobs_added,
-            message=f"Found {len(jobs_found)} jobs, added {jobs_added} new jobs"
-        )
-    
+        return execute_crawl(db)
     except Exception as e:
         logger.error(f"Error during crawl: {e}")
         raise HTTPException(status_code=500, detail=f"Crawl failed: {str(e)}")
+
+
+@app.post("/api/crawl/rescan", response_model=CrawlResult)
+async def rescan_jobs_alias(db: Session = Depends(get_db)):
+    """Alias endpoint for manual crawl"""
+    return await rescan_jobs(db)
+
+@app.get("/health")
+async def healthcheck(db: Session = Depends(get_db)):
+    """Healthcheck for ops dashboards."""
+    db_ok = True
+    db_error = None
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as exc:  # pragma: no cover - defensive
+        db_ok = False
+        db_error = str(exc)
+
+    last_run = (
+        db.query(CrawlRun).order_by(CrawlRun.started_at.desc()).limit(1).first()
+    )
+
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "scheduler_mode": settings.CRAWL_MODE,
+        "db_ok": db_ok,
+        "db_error": db_error,
+        "last_run": _serialize_run(last_run) if last_run else None,
+    }
 
 @app.get("/api/settings", response_model=SettingsSchema)
 async def get_settings(db: Session = Depends(get_db)):
@@ -176,16 +226,23 @@ async def get_settings(db: Session = Depends(get_db)):
     locations_setting = db.query(SettingsModel).filter(SettingsModel.key == "locations").first()
     sources_setting = db.query(SettingsModel).filter(SettingsModel.key == "sources").first()
     schedule_setting = db.query(SettingsModel).filter(SettingsModel.key == "schedule").first()
+    greenhouse_setting = db.query(SettingsModel).filter(SettingsModel.key == "greenhouse_boards").first()
     
     keywords = json.loads(keywords_setting.value) if keywords_setting else settings.DEFAULT_KEYWORDS
     locations = json.loads(locations_setting.value) if locations_setting else settings.DEFAULT_LOCATIONS
     sources = json.loads(sources_setting.value) if sources_setting else settings.JOB_SOURCES
+    if sources:
+        merged_sources = settings.JOB_SOURCES.copy()
+        merged_sources.update(sources)
+        sources = merged_sources
     schedule = json.loads(schedule_setting.value) if schedule_setting else {"hour": settings.CRAWL_SCHEDULE_HOUR, "minute": settings.CRAWL_SCHEDULE_MINUTE}
+    greenhouse_boards = json.loads(greenhouse_setting.value) if greenhouse_setting else settings.GREENHOUSE_BOARDS
     
     return SettingsSchema(
         keywords=keywords,
         locations=locations,
         sources=sources,
+        greenhouse_boards=greenhouse_boards,
         crawl_hour=schedule.get("hour", 7),
         crawl_minute=schedule.get("minute", 0)
     )
@@ -211,6 +268,18 @@ async def update_settings(settings_data: SettingsSchema, db: Session = Depends(g
     else:
         db.add(SettingsModel(key="sources", value=json.dumps(settings_data.sources)))
     
+    greenhouse_setting = db.query(SettingsModel).filter(SettingsModel.key == "greenhouse_boards").first()
+    boards_payload = []
+    for board in settings_data.greenhouse_boards:
+        if hasattr(board, "model_dump"):
+            boards_payload.append(board.model_dump())
+        else:
+            boards_payload.append(board)
+    if greenhouse_setting:
+        greenhouse_setting.value = json.dumps(boards_payload)
+    else:
+        db.add(SettingsModel(key="greenhouse_boards", value=json.dumps(boards_payload)))
+    
     schedule_setting = db.query(SettingsModel).filter(SettingsModel.key == "schedule").first()
     schedule_data = {"hour": settings_data.crawl_hour, "minute": settings_data.crawl_minute}
     if schedule_setting:
@@ -221,6 +290,32 @@ async def update_settings(settings_data: SettingsSchema, db: Session = Depends(g
     db.commit()
     
     return settings_data
+
+
+@app.get("/api/runs", response_model=List[CrawlRunSchema])
+async def list_runs(
+    limit: int = Query(10, le=100),
+    offset: int = Query(0),
+    db: Session = Depends(get_db),
+):
+    """List recent crawl runs"""
+    runs = (
+        db.query(CrawlRun)
+        .order_by(CrawlRun.started_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return [_serialize_run(run) for run in runs]
+
+
+@app.get("/api/runs/{run_id}", response_model=CrawlRunSchema)
+async def get_run(run_id: str, db: Session = Depends(get_db)):
+    """Get details for a specific crawl run"""
+    run = db.query(CrawlRun).filter(CrawlRun.run_id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _serialize_run(run)
 
 @app.get("/api/stats")
 async def get_stats(db: Session = Depends(get_db)):
