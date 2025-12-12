@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from .config import settings
 
@@ -18,6 +18,8 @@ class JobBase(BaseModel):
     source: str
     source_detail: Optional[str] = None
     post_date: Optional[str] = None
+    remote: bool = False
+    source_meta: Optional[Dict[str, Any]] = None
 
 class JobCreate(JobBase):
     job_hash: str
@@ -34,6 +36,7 @@ class JobResponse(JobBase):
     relevance_score: float
     keywords_matched: Optional[str] = None
     source_detail: Optional[str] = None
+    source_meta: Optional[Dict[str, Any]] = None
     applied: bool
     notes: Optional[str] = None
     created_at: datetime
@@ -47,6 +50,10 @@ class SettingsSchema(BaseModel):
     locations: List[str]
     sources: dict
     greenhouse_boards: List[GreenhouseBoard] = Field(default_factory=lambda: settings.GREENHOUSE_BOARDS)
+    india_mode: bool = Field(default_factory=lambda: settings.INDIA_MODE)
+    linkedin_mode: str = Field(default_factory=lambda: settings.LINKEDIN_MODE)
+    linkedin_email: Dict[str, Any] = Field(default_factory=lambda: settings.LINKEDIN_EMAIL)
+    linkedin_crawl: Dict[str, Any] = Field(default_factory=lambda: settings.LINKEDIN_CRAWL)
     crawl_hour: int
     crawl_minute: int
 
@@ -55,6 +62,7 @@ class CrawlResult(BaseModel):
     jobs_found: int
     jobs_added: int
     message: str
+    run_id: Optional[str] = None
 
 
 class SourceFailure(BaseModel):

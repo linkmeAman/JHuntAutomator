@@ -1,0 +1,15 @@
+{
+  "jobs": [
+    {
+      "id": 1,
+      "title": "Python Developer",
+      "company_name": "RemotiveCo",
+      "category": "Software",
+      "job_type": "Full-time",
+      "publication_date": "2024-01-01",
+      "candidate_required_location": "Worldwide",
+      "url": "https://remotive.com/remote-jobs/software-dev/python-developer-1",
+      "description": "Build APIs"
+    }
+  ]
+}

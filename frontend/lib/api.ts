@@ -18,6 +18,8 @@ export interface Job {
   requirements?: string;
   url: string;
   source: string;
+  remote: boolean;
+  source_meta?: Record<string, any>;
   post_date?: string;
   job_hash: string;
   relevance_score: number;
@@ -33,6 +35,10 @@ export interface Settings {
   locations: string[];
   sources: Record<string, boolean>;
   greenhouse_boards: { name: string; board_url: string }[];
+  india_mode: boolean;
+  linkedin_mode: string;
+  linkedin_email: Record<string, any>;
+  linkedin_crawl: Record<string, any>;
   crawl_hour: number;
   crawl_minute: number;
 }
@@ -68,10 +74,12 @@ export const fetchJobs = async (params?: {
   q?: string;
   location?: string;
   applied?: boolean;
+  source?: string[] | string;
+  remote?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<Job[]> => {
-  const response = await api.get('/api/jobs', { params });
+  const response = await api.get('/api/jobs', { params: { ...params, _t: Date.now() } });
   return response.data;
 };
 

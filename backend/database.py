@@ -39,12 +39,23 @@ def ensure_columns():
         columns = {row[1] for row in result}
         if "source_detail" not in columns:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN source_detail VARCHAR"))
+        if "remote" not in columns:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN remote BOOLEAN DEFAULT 0"))
+        if "source_meta" not in columns:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN source_meta TEXT"))
+        if "job_key" not in columns:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN job_key VARCHAR"))
+        result_runs = conn.execute(text("PRAGMA table_info(crawl_runs)"))
+        run_cols = {row[1] for row in result_runs}
+        if "source_metrics" not in run_cols:
+            conn.execute(text("ALTER TABLE crawl_runs ADD COLUMN source_metrics TEXT"))
 
 
 def ensure_indexes():
     """Create helpful indexes if they do not already exist."""
     with engine.connect() as conn:
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_job_hash ON jobs(job_hash);"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_job_key ON jobs(job_key);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_jobs_relevance_score ON jobs(relevance_score);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_jobs_applied ON jobs(applied);"))

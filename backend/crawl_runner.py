@@ -8,10 +8,23 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .crawler import JobCrawler
+from .http_client import SourceBlockedError
 from .models import CrawlRun, Job, Settings as SettingsModel
 from .nlp import get_nlp_scorer
 from .notifications import NotificationService
 from .schemas import CrawlResult, JobCreate
+from .sources import (
+    remotive,
+    workingnomads,
+    naukri,
+    shine,
+    timesjobs,
+    remote_co,
+    glassdoor,
+    wellfound,
+    yc,
+    linkedin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +94,21 @@ def _load_runtime_settings(db: Session) -> Tuple[List[str], List[str], dict, Lis
     return keywords, locations, _merge_sources(sources), greenhouse_boards
 
 
-def execute_crawl(db: Session, *, send_notifications: bool = False) -> CrawlResult:
+def execute_crawl(
+    db: Session,
+    *,
+    send_notifications: bool = False,
+    dry_run: bool = False,
+    override_sources: dict | None = None,
+    max_pages: int | None = None,
+    min_store_score: float | None = None,
+) -> CrawlResult:
     """Run the crawler pipeline once."""
     keywords, locations, sources, greenhouse_boards = _load_runtime_settings(db)
+    if override_sources:
+        merged = sources.copy()
+        merged.update(override_sources)
+        sources = merged
     nlp_scorer = get_nlp_scorer()
 
     run_id = str(uuid4())
@@ -100,13 +125,24 @@ def execute_crawl(db: Session, *, send_notifications: bool = False) -> CrawlResu
     attempted_sources: List[str] = []
     succeeded_sources: List[str] = []
     failed_sources: List[dict] = []
+    source_metrics: List[dict] = []
     jobs_found: List[JobCreate] = []
 
     source_functions = {
-        "remoteok": crawler.crawl_remoteok,
-        "weworkremotely": crawler.crawl_weworkremotely_rss,
-        "indeed": crawler.crawl_indeed,
-        "greenhouse": crawler.crawl_greenhouse_boards,
+        "remoteok": lambda: crawler.crawl_remoteok(),
+        "weworkremotely": lambda: crawler.crawl_weworkremotely_rss(),
+        "indeed": lambda: crawler.crawl_indeed(),
+        "greenhouse": lambda: crawler.crawl_greenhouse_boards(),
+        "remotive": lambda: remotive.fetch_jobs(settings),
+        "workingnomads": lambda: workingnomads.fetch_jobs(settings),
+        "remote_co": lambda: remote_co.fetch_jobs(settings),
+        "naukri": lambda: naukri.fetch_jobs(settings),
+        "shine": lambda: shine.fetch_jobs(settings),
+        "timesjobs": lambda: timesjobs.fetch_jobs(settings),
+        "glassdoor": lambda: glassdoor.fetch_jobs(settings),
+        "wellfound": lambda: wellfound.fetch_jobs(settings),
+        "yc": lambda: yc.fetch_jobs(settings),
+        "linkedin": lambda: linkedin.fetch_jobs(settings),
     }
 
     for source_name, crawl_fn in source_functions.items():
@@ -114,17 +150,72 @@ def execute_crawl(db: Session, *, send_notifications: bool = False) -> CrawlResu
             continue
         attempted_sources.append(source_name)
 
+        metrics = {
+            "source": source_name,
+            "requested_pages": max_pages or settings.MAX_PAGES_PER_SOURCE,
+            "pages_fetched": 0,
+            "http_status_counts": {},
+            "jobs_parsed_count": 0,
+            "jobs_after_normalization_count": 0,
+            "jobs_scored_count": 0,
+            "jobs_above_threshold_count": 0,
+            "jobs_insert_attempted_count": 0,
+            "jobs_inserted_count": 0,
+            "jobs_deduped_count": 0,
+            "errors": [],
+        }
         try:
             if source_name == "indeed":
                 logger.warning(
                     "Indeed scraping is brittle/ToS-sensitive; enable only for personal use."
                 )
             jobs = crawl_fn()
-            jobs_found.extend(jobs)
+            if source_name in {"remotive", "workingnomads", "remote_co", "naukri", "shine", "timesjobs", "linkedin"}:
+                # Normalize dicts into JobCreate-like objects after scoring
+                scored_jobs: List[JobCreate] = []
+                for job_dict in jobs:
+                    metrics["jobs_parsed_count"] += 1
+                    score, keywords_matched = crawler.calculate_relevance_score(job_dict)
+                    metrics["jobs_scored_count"] += 1
+                    if score >= (min_store_score if min_store_score is not None else settings.MIN_SCORE_TO_STORE):
+                        metrics["jobs_above_threshold_count"] += 1
+                    job_hash = Job.generate_hash(
+                        job_dict.get("title", ""),
+                        job_dict.get("company", ""),
+                        job_dict.get("url", ""),
+                        job_dict.get("source", ""),
+                        job_dict.get("post_date"),
+                        job_dict.get("location"),
+                    )
+                    job_key = Job.generate_key(
+                        job_dict.get("title", ""),
+                        job_dict.get("company", ""),
+                        job_dict.get("url", ""),
+                        job_dict.get("source", ""),
+                        job_dict.get("post_date"),
+                        job_dict.get("location"),
+                    )
+                    job_payload = {
+                        **job_dict,
+                        "job_hash": job_hash,
+                        "job_key": job_key,
+                        "relevance_score": score,
+                        "keywords_matched": keywords_matched,
+                    }
+                    scored_jobs.append(JobCreate(**job_payload))
+                jobs_found.extend(scored_jobs)
+            else:
+                jobs_found.extend(jobs)
             succeeded_sources.append(source_name)
+        except SourceBlockedError as exc:
+            failed_sources.append({"source": source_name, "error": str(exc)})
+            logger.warning("Source %s blocked: %s", source_name, exc)
+            metrics["errors"].append(str(exc))
         except Exception as exc:
             failed_sources.append({"source": source_name, "error": str(exc)})
             logger.error("Source %s failed: %s", source_name, exc)
+            metrics["errors"].append(str(exc))
+        source_metrics.append(metrics)
 
     jobs_found.sort(key=lambda x: x.relevance_score, reverse=True)
 
@@ -135,6 +226,7 @@ def execute_crawl(db: Session, *, send_notifications: bool = False) -> CrawlResu
         sources_attempted=json.dumps(attempted_sources),
         sources_succeeded=json.dumps([]),
         sources_failed=json.dumps([]),
+        source_metrics=json.dumps(source_metrics),
         fetched_count=0,
         inserted_new_count=0,
     )
@@ -144,16 +236,26 @@ def execute_crawl(db: Session, *, send_notifications: bool = False) -> CrawlResu
     try:
         jobs_to_save: List[Job] = []
         for job_data in jobs_found:
-            existing_job = db.query(Job).filter(Job.job_hash == job_data.job_hash).first()
+            existing_job = db.query(Job).filter(Job.job_key == job_data.job_key).first()
             if existing_job:
+                metrics_entry = next((m for m in source_metrics if m["source"] == job_data.source), None)
+                if metrics_entry:
+                    metrics_entry["jobs_deduped_count"] += 1
                 continue
-            new_job = Job(**job_data.dict())
+            payload = job_data.dict()
+            if payload.get("source_meta") is not None:
+                payload["source_meta"] = json.dumps(payload["source_meta"])
+            new_job = Job(**payload)
             jobs_to_save.append(new_job)
             new_jobs.append(new_job)
+            metrics_entry = next((m for m in source_metrics if m["source"] == job_data.source), None)
+            if metrics_entry:
+                metrics_entry["jobs_insert_attempted_count"] += 1
 
-        if jobs_to_save:
+        if jobs_to_save and not dry_run:
             db.bulk_save_objects(jobs_to_save)
-        db.commit()
+        if not dry_run:
+            db.commit()
     except Exception as exc:
         db.rollback()
         failed_sources.append({"source": "pipeline", "error": str(exc)})
@@ -167,12 +269,16 @@ def execute_crawl(db: Session, *, send_notifications: bool = False) -> CrawlResu
         run_entry.sources_attempted = json.dumps(attempted_sources)
         run_entry.sources_succeeded = json.dumps(succeeded_sources)
         run_entry.sources_failed = json.dumps(failed_sources)
+        run_entry.source_metrics = json.dumps(source_metrics)
         if failed_sources:
             run_entry.errors_summary = "; ".join(
                 f"{item.get('source')}: {item.get('error')}" for item in failed_sources
             )
         db.add(run_entry)
-        db.commit()
+        if not dry_run:
+            db.commit()
+        else:
+            db.rollback()
 
     if send_notifications and settings.ENABLE_NOTIFICATIONS:
         notifier = NotificationService()
@@ -191,4 +297,5 @@ def execute_crawl(db: Session, *, send_notifications: bool = False) -> CrawlResu
         jobs_found=len(jobs_found),
         jobs_added=len(new_jobs),
         message=f"Found {len(jobs_found)} jobs, added {len(new_jobs)} new jobs",
+        run_id=run_id,
     )

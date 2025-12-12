@@ -12,6 +12,7 @@ from .schemas import JobResponse, JobUpdate, SettingsSchema, CrawlResult, CrawlR
 from .config import settings
 from .scheduler import start_scheduler
 from .crawl_runner import execute_crawl
+from .api_debug import router as debug_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(debug_router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -69,6 +71,15 @@ def _serialize_run(run: CrawlRun) -> CrawlRunSchema:
         inserted_new_count=run.inserted_new_count,
         errors_summary=run.errors_summary,
     )
+
+
+def _coerce_source_meta(job: Job):
+    if job and isinstance(job.source_meta, str):
+        try:
+            job.source_meta = json.loads(job.source_meta)
+        except Exception:
+            job.source_meta = None
+    return job
 
 def init_default_settings(db: Session):
     """Initialize default settings if they don't exist"""
@@ -122,6 +133,31 @@ def init_default_settings(db: Session):
             value=json.dumps(settings.GREENHOUSE_BOARDS)
         )
         db.add(greenhouse_setting)
+
+    india_setting = db.query(SettingsModel).filter(SettingsModel.key == "india_mode").first()
+    if india_setting:
+        india_setting.value = json.dumps(settings.INDIA_MODE)
+    else:
+        india_setting = SettingsModel(key="india_mode", value=json.dumps(settings.INDIA_MODE))
+        db.add(india_setting)
+
+    linkedin_mode_setting = db.query(SettingsModel).filter(SettingsModel.key == "linkedin_mode").first()
+    if linkedin_mode_setting and linkedin_mode_setting.value:
+        linkedin_mode_setting.value = linkedin_mode_setting.value
+    else:
+        db.add(SettingsModel(key="linkedin_mode", value=json.dumps(settings.LINKEDIN_MODE)))
+
+    linkedin_email_setting = db.query(SettingsModel).filter(SettingsModel.key == "linkedin_email").first()
+    if linkedin_email_setting and linkedin_email_setting.value:
+        linkedin_email_setting.value = linkedin_email_setting.value
+    else:
+        db.add(SettingsModel(key="linkedin_email", value=json.dumps(settings.LINKEDIN_EMAIL)))
+
+    linkedin_crawl_setting = db.query(SettingsModel).filter(SettingsModel.key == "linkedin_crawl").first()
+    if linkedin_crawl_setting and linkedin_crawl_setting.value:
+        linkedin_crawl_setting.value = linkedin_crawl_setting.value
+    else:
+        db.add(SettingsModel(key="linkedin_crawl", value=json.dumps(settings.LINKEDIN_CRAWL)))
     
     db.commit()
 
@@ -134,6 +170,8 @@ async def get_jobs(
     q: Optional[str] = Query(None, description="Search query"),
     location: Optional[str] = Query(None, description="Filter by location"),
     applied: Optional[bool] = Query(None, description="Filter by applied status"),
+    source: Optional[List[str]] = Query(None, description="Filter by source (repeat or comma-separated)"),
+    remote: Optional[bool] = Query(None, description="Filter remote roles"),
     limit: int = Query(100, le=500),
     offset: int = Query(0),
     db: Session = Depends(get_db)
@@ -153,9 +191,19 @@ async def get_jobs(
     
     if applied is not None:
         query = query.filter(Job.applied == applied)
+
+    if source:
+        sources_flat = []
+        for s in source:
+            sources_flat.extend([part.strip() for part in s.split(",") if part.strip()])
+        if sources_flat:
+            query = query.filter(Job.source.in_(sources_flat))
+
+    if remote is not None:
+        query = query.filter(Job.remote == remote)
     
     jobs = query.order_by(Job.relevance_score.desc(), Job.created_at.desc()).offset(offset).limit(limit).all()
-    return jobs
+    return [_coerce_source_meta(job) for job in jobs]
 
 @app.get("/api/jobs/{job_id}", response_model=JobResponse)
 async def get_job(job_id: int, db: Session = Depends(get_db)):
@@ -163,7 +211,7 @@ async def get_job(job_id: int, db: Session = Depends(get_db)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return job
+    return _coerce_source_meta(job)
 
 @app.patch("/api/jobs/{job_id}", response_model=JobResponse)
 async def update_job(job_id: int, job_update: JobUpdate, db: Session = Depends(get_db)):
@@ -179,7 +227,7 @@ async def update_job(job_id: int, job_update: JobUpdate, db: Session = Depends(g
     
     db.commit()
     db.refresh(job)
-    return job
+    return _coerce_source_meta(job)
 
 @app.post("/api/rescan", response_model=CrawlResult)
 async def rescan_jobs(db: Session = Depends(get_db)):
@@ -227,6 +275,10 @@ async def get_settings(db: Session = Depends(get_db)):
     sources_setting = db.query(SettingsModel).filter(SettingsModel.key == "sources").first()
     schedule_setting = db.query(SettingsModel).filter(SettingsModel.key == "schedule").first()
     greenhouse_setting = db.query(SettingsModel).filter(SettingsModel.key == "greenhouse_boards").first()
+    india_setting = db.query(SettingsModel).filter(SettingsModel.key == "india_mode").first()
+    linkedin_mode_setting = db.query(SettingsModel).filter(SettingsModel.key == "linkedin_mode").first()
+    linkedin_email_setting = db.query(SettingsModel).filter(SettingsModel.key == "linkedin_email").first()
+    linkedin_crawl_setting = db.query(SettingsModel).filter(SettingsModel.key == "linkedin_crawl").first()
     
     keywords = json.loads(keywords_setting.value) if keywords_setting else settings.DEFAULT_KEYWORDS
     locations = json.loads(locations_setting.value) if locations_setting else settings.DEFAULT_LOCATIONS
@@ -237,12 +289,20 @@ async def get_settings(db: Session = Depends(get_db)):
         sources = merged_sources
     schedule = json.loads(schedule_setting.value) if schedule_setting else {"hour": settings.CRAWL_SCHEDULE_HOUR, "minute": settings.CRAWL_SCHEDULE_MINUTE}
     greenhouse_boards = json.loads(greenhouse_setting.value) if greenhouse_setting else settings.GREENHOUSE_BOARDS
+    india_mode = json.loads(india_setting.value) if india_setting else settings.INDIA_MODE
+    linkedin_mode = json.loads(linkedin_mode_setting.value) if linkedin_mode_setting else settings.LINKEDIN_MODE
+    linkedin_email = json.loads(linkedin_email_setting.value) if linkedin_email_setting else settings.LINKEDIN_EMAIL
+    linkedin_crawl = json.loads(linkedin_crawl_setting.value) if linkedin_crawl_setting else settings.LINKEDIN_CRAWL
     
     return SettingsSchema(
         keywords=keywords,
         locations=locations,
         sources=sources,
         greenhouse_boards=greenhouse_boards,
+        india_mode=india_mode,
+        linkedin_mode=linkedin_mode,
+        linkedin_email=linkedin_email,
+        linkedin_crawl=linkedin_crawl,
         crawl_hour=schedule.get("hour", 7),
         crawl_minute=schedule.get("minute", 0)
     )
@@ -279,6 +339,30 @@ async def update_settings(settings_data: SettingsSchema, db: Session = Depends(g
         greenhouse_setting.value = json.dumps(boards_payload)
     else:
         db.add(SettingsModel(key="greenhouse_boards", value=json.dumps(boards_payload)))
+
+    india_setting = db.query(SettingsModel).filter(SettingsModel.key == "india_mode").first()
+    if india_setting:
+        india_setting.value = json.dumps(settings_data.india_mode)
+    else:
+        db.add(SettingsModel(key="india_mode", value=json.dumps(settings_data.india_mode)))
+
+    linkedin_mode_setting = db.query(SettingsModel).filter(SettingsModel.key == "linkedin_mode").first()
+    if linkedin_mode_setting:
+        linkedin_mode_setting.value = json.dumps(settings_data.linkedin_mode)
+    else:
+        db.add(SettingsModel(key="linkedin_mode", value=json.dumps(settings_data.linkedin_mode)))
+
+    linkedin_email_setting = db.query(SettingsModel).filter(SettingsModel.key == "linkedin_email").first()
+    if linkedin_email_setting:
+        linkedin_email_setting.value = json.dumps(settings_data.linkedin_email)
+    else:
+        db.add(SettingsModel(key="linkedin_email", value=json.dumps(settings_data.linkedin_email)))
+
+    linkedin_crawl_setting = db.query(SettingsModel).filter(SettingsModel.key == "linkedin_crawl").first()
+    if linkedin_crawl_setting:
+        linkedin_crawl_setting.value = json.dumps(settings_data.linkedin_crawl)
+    else:
+        db.add(SettingsModel(key="linkedin_crawl", value=json.dumps(settings_data.linkedin_crawl)))
     
     schedule_setting = db.query(SettingsModel).filter(SettingsModel.key == "schedule").first()
     schedule_data = {"hour": settings_data.crawl_hour, "minute": settings_data.crawl_minute}

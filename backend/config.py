@@ -30,12 +30,26 @@ class Settings:
         self.CRAWL_SCHEDULE_MINUTE: int = int(os.getenv("CRAWL_SCHEDULE_MINUTE", "0"))
         
         self.MAX_JOBS_PER_SOURCE: int = int(os.getenv("MAX_JOBS_PER_SOURCE", "50"))
+        self.MAX_PAGES_PER_SOURCE: int = int(os.getenv("MAX_PAGES_PER_SOURCE", "5"))
+        self.REQUEST_DELAY_MS_MIN: int = int(os.getenv("REQUEST_DELAY_MS_MIN", "600"))
+        self.REQUEST_DELAY_MS_MAX: int = int(os.getenv("REQUEST_DELAY_MS_MAX", "1200"))
+        self.SCRAPE_MAX_PAGES: int = int(os.getenv("SCRAPE_MAX_PAGES", "3"))
         
         self.JOB_SOURCES: dict = {
             "indeed": _as_bool(os.getenv("ENABLE_INDEED"), False),
             "remoteok": _as_bool(os.getenv("ENABLE_REMOTEOK"), True),
             "weworkremotely": _as_bool(os.getenv("ENABLE_WEWORKREMOTELY"), True),
             "greenhouse": _as_bool(os.getenv("ENABLE_GREENHOUSE"), True),
+            "remotive": _as_bool(os.getenv("ENABLE_REMOTIVE"), True),
+            "workingnomads": _as_bool(os.getenv("ENABLE_WORKINGNOMADS"), True),
+            "remote_co": _as_bool(os.getenv("ENABLE_REMOTE_CO"), True),
+            "naukri": _as_bool(os.getenv("ENABLE_NAUKRI"), False),
+            "shine": _as_bool(os.getenv("ENABLE_SHINE"), False),
+            "timesjobs": _as_bool(os.getenv("ENABLE_TIMESJOBS"), False),
+            "glassdoor": _as_bool(os.getenv("ENABLE_GLASSDOOR"), False),
+            "wellfound": _as_bool(os.getenv("ENABLE_WELLFOUND"), False),
+            "yc": _as_bool(os.getenv("ENABLE_YC"), False),
+            "linkedin": _as_bool(os.getenv("ENABLE_LINKEDIN"), False),
         }
 
         profile_text = os.getenv("PROFILE_TEXT", "").strip()
@@ -66,7 +80,32 @@ class Settings:
         self.TELEGRAM_CHAT_ID: str | None = os.getenv("TELEGRAM_CHAT_ID")
 
         self.NOTIFICATION_MIN_SCORE: float = float(os.getenv("NOTIFICATION_MIN_SCORE", "3.0"))
+        self.MIN_SCORE_TO_STORE: float = float(os.getenv("MIN_SCORE_TO_STORE", "0.0"))
         self.CRAWL_MODE: str = os.getenv("CRAWL_MODE", "workflow").lower()
+        self.INDIA_MODE: bool = _as_bool(os.getenv("INDIA_MODE"), False)
+
+        self.LINKEDIN_MODE: str = os.getenv("LINKEDIN_MODE", "email")
+        self.LINKEDIN_EMAIL: dict = {
+            "provider": os.getenv("LINKEDIN_EMAIL_PROVIDER", "imap"),
+            "gmail_oauth": {"enabled": _as_bool(os.getenv("LINKEDIN_GMAIL_OAUTH_ENABLED"), False)},
+            "imap": {
+                "host": os.getenv("LINKEDIN_IMAP_HOST", ""),
+                "port": int(os.getenv("LINKEDIN_IMAP_PORT", "993")),
+                "username": os.getenv("LINKEDIN_IMAP_USERNAME", ""),
+                "password_env": os.getenv("LINKEDIN_IMAP_PASSWORD_ENV", "LINKEDIN_IMAP_PASSWORD"),
+            },
+            "query": os.getenv(
+                "LINKEDIN_EMAIL_QUERY",
+                "from:jobalerts-noreply@linkedin.com OR subject:(Job Alert) newer_than:7d",
+            ),
+            "max_emails_per_run": int(os.getenv("LINKEDIN_MAX_EMAILS_PER_RUN", "30")),
+        }
+        self.LINKEDIN_CRAWL: dict = {
+            "allowed": _as_bool(os.getenv("LINKEDIN_CRAWL_ALLOWED"), False),
+            "seed_urls": os.getenv("LINKEDIN_SEED_URLS", "").split(",") if os.getenv("LINKEDIN_SEED_URLS") else [],
+            "max_pages": int(os.getenv("LINKEDIN_MAX_PAGES", "2")),
+            "min_delay_sec": int(os.getenv("LINKEDIN_MIN_DELAY_SEC", "3")),
+        }
 
     def _parse_greenhouse_boards(self, boards_value: str | None) -> List[dict]:
         if not boards_value:

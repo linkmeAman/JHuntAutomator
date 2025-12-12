@@ -46,7 +46,7 @@ export default function FilterBar({ onSearch, onLocationFilter, onAppliedFilter,
             placeholder="Search jobs by title, company, or keywords..."
             value={searchQuery}
             onChange={handleSearchChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-500 focus:outline-none"
           />
         </div>
         
@@ -60,7 +60,7 @@ export default function FilterBar({ onSearch, onLocationFilter, onAppliedFilter,
             placeholder="Filter by location..."
             value={location}
             onChange={handleLocationChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-500 focus:outline-none"
           />
         </div>
         
@@ -72,7 +72,7 @@ export default function FilterBar({ onSearch, onLocationFilter, onAppliedFilter,
             id="applied"
             value={appliedFilter}
             onChange={handleAppliedChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 shadow-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-500 focus:outline-none"
           >
             <option value="all">All Jobs</option>
             <option value="pending">Not Applied</option>

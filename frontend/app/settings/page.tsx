@@ -18,6 +18,7 @@ export default function SettingsPage() {
   const [newLocation, setNewLocation] = useState('');
   const [newBoardName, setNewBoardName] = useState('');
   const [newBoardUrl, setNewBoardUrl] = useState('');
+  const [linkedinMode, setLinkedinMode] = useState<'email' | 'whitelist_crawl'>('email');
 
   useEffect(() => {
     loadSettings();
@@ -28,7 +29,16 @@ export default function SettingsPage() {
     try {
       setLoading(true);
       const data = await fetchSettings();
-      setSettings(data);
+      const normalized = {
+        ...data,
+        india_mode: data.india_mode ?? false,
+        linkedin_mode: (data.linkedin_mode as 'email' | 'whitelist_crawl') || 'email',
+        linkedin_email:
+          data.linkedin_email || { imap: { host: '', port: 993, username: '' }, query: '', max_emails_per_run: 30 },
+        linkedin_crawl: data.linkedin_crawl || { allowed: false, seed_urls: [], max_pages: 2, min_delay_sec: 3 },
+      };
+      setSettings(normalized);
+      setLinkedinMode(normalized.linkedin_mode);
     } catch (err) {
       setError('Failed to load settings');
       console.error('Error loading settings:', err);
@@ -107,6 +117,22 @@ export default function SettingsPage() {
     });
   };
 
+  const sourceGroups = [
+    {
+      title: 'Remote / Global',
+      sources: ['remoteok', 'weworkremotely', 'greenhouse', 'remotive', 'workingnomads', 'remote_co'],
+    },
+    {
+      title: 'India',
+      sources: ['naukri', 'shine', 'timesjobs'],
+    },
+    {
+      title: 'Restricted',
+      sources: ['linkedin', 'glassdoor', 'wellfound', 'yc'],
+      hint: 'LinkedIn imports via email alerts; direct crawl requires permission. Others restricted; enable only with official access.',
+    },
+  ];
+
   const toggleSource = (source: string) => {
     if (!settings) return;
     setSettings({
@@ -116,6 +142,23 @@ export default function SettingsPage() {
         [source]: !settings.sources[source]
       }
     });
+  };
+  const setIndiaMode = (value: boolean) => {
+    if (!settings) return;
+    const updatedSources = { ...settings.sources };
+    if (value) {
+      ["naukri", "shine", "timesjobs"].forEach((src) => (updatedSources[src] = true));
+      if (!settings.locations.includes("India")) {
+        setSettings({
+          ...settings,
+          india_mode: value,
+          sources: updatedSources,
+          locations: [...settings.locations, "India"],
+        });
+        return;
+      }
+    }
+    setSettings({ ...settings, india_mode: value, sources: updatedSources });
   };
 
   const addBoard = () => {
@@ -149,6 +192,9 @@ export default function SettingsPage() {
 
   if (!settings) return null;
 
+  const safeLinkedInEmail = settings.linkedin_email || { imap: { host: '', port: 993, username: '' }, query: '' };
+  const safeLinkedInCrawl = settings.linkedin_crawl || { allowed: false, seed_urls: [] };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow-sm">
@@ -160,6 +206,129 @@ export default function SettingsPage() {
               </svg>
             </Link>
             <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">LinkedIn</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              LinkedIn imports via email alerts (recommended). Direct crawling requires explicit permission/whitelisting.
+            </p>
+
+            <div className="mb-4">
+              <label className="text-sm font-medium text-gray-700 mb-2 block">Mode</label>
+              <select
+                value={linkedinMode}
+                onChange={(e) => {
+                  const mode = e.target.value as 'email' | 'whitelist_crawl';
+                  setLinkedinMode(mode);
+                  setSettings(settings ? { ...settings, linkedin_mode: mode } : null);
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="email">Email (recommended)</option>
+                <option value="whitelist_crawl">Whitelisted Crawl (requires permission)</option>
+              </select>
+            </div>
+
+            {linkedinMode === 'email' && settings && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">IMAP Host</label>
+                  <input
+                    value={safeLinkedInEmail.imap?.host || ''}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        linkedin_email: {
+                          ...safeLinkedInEmail,
+                          imap: { ...(safeLinkedInEmail.imap || {}), host: e.target.value },
+                        },
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">IMAP Port</label>
+                    <input
+                      type="number"
+                      value={safeLinkedInEmail.imap?.port || 993}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          linkedin_email: {
+                            ...safeLinkedInEmail,
+                            imap: { ...(safeLinkedInEmail.imap || {}), port: parseInt(e.target.value) },
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">IMAP Username</label>
+                    <input
+                      value={safeLinkedInEmail.imap?.username || ''}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          linkedin_email: {
+                            ...safeLinkedInEmail,
+                            imap: { ...(safeLinkedInEmail.imap || {}), username: e.target.value },
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Search Query</label>
+                  <input
+                    value={safeLinkedInEmail.query || ''}
+                    onChange={(e) =>
+                      setSettings({ ...settings, linkedin_email: { ...safeLinkedInEmail, query: e.target.value } })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-500 focus:outline-none"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Default: from:jobalerts-noreply@linkedin.com OR subject:(Job Alert) newer_than:7d</p>
+                </div>
+              </div>
+            )}
+
+            {linkedinMode === 'whitelist_crawl' && settings && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={safeLinkedInCrawl.allowed}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        linkedin_crawl: { ...safeLinkedInCrawl, allowed: e.target.checked },
+                      })
+                    }
+                  />
+                  <span className="text-sm text-gray-800">I have explicit LinkedIn crawl permission (whitelisted).</span>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Seed URLs (one per line)</label>
+                  <textarea
+                    value={(safeLinkedInCrawl.seed_urls || []).join('\n')}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        linkedin_crawl: { ...safeLinkedInCrawl, seed_urls: e.target.value.split('\n') },
+                      })
+                    }
+                    rows={3}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-500 focus:outline-none"
+                  />
+                  <p className="text-xs text-red-600 mt-1">Use only your own search URLs. Do not crawl without approval.</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -196,7 +365,7 @@ export default function SettingsPage() {
                 onChange={(e) => setNewKeyword(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && addKeyword()}
                 placeholder="Add a keyword (e.g., Python, React, AWS)"
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-500 focus:outline-none"
               />
               <button
                 onClick={addKeyword}
@@ -237,7 +406,7 @@ export default function SettingsPage() {
                 onChange={(e) => setNewLocation(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && addLocation()}
                 placeholder="Add a location"
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-500 focus:outline-none"
               />
               <button
                 onClick={addLocation}
@@ -270,20 +439,44 @@ export default function SettingsPage() {
             <p className="text-sm text-gray-600 mb-4">
               Enable or disable job boards to crawl.
             </p>
-            
-            <div className="space-y-3">
-              {Object.entries(settings.sources).map(([source, enabled]) => (
-                <div key={source} className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id={source}
-                    checked={enabled}
-                    onChange={() => toggleSource(source)}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                  />
-                  <label htmlFor={source} className="ml-3 text-sm font-medium text-gray-700 capitalize">
-                    {source.replace(/([A-Z])/g, ' $1').trim()}
-                  </label>
+              <div className="mb-4 flex items-center justify-between p-3 rounded-md border border-gray-200 bg-gray-50">
+              <div>
+                <p className="text-sm font-medium text-gray-900">India Mode</p>
+                <p className="text-xs text-gray-600">Auto-selects India portals; you can still override manually.</p>
+              </div>
+              <label className="inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="sr-only"
+                  checked={!!settings.india_mode}
+                  onChange={(e) => setIndiaMode(e.target.checked)}
+                />
+                <div className={`w-10 h-5 rounded-full ${settings.india_mode ? 'bg-blue-600' : 'bg-gray-300'}`}>
+                  <div className={`h-5 w-5 bg-white rounded-full shadow transform ${settings.india_mode ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                </div>
+              </label>
+            </div>
+
+            <div className="space-y-6">
+              {sourceGroups.map((group) => (
+                <div key={group.title}>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold text-gray-900">{group.title}</p>
+                    {group.hint && <p className="text-xs text-gray-500">{group.hint}</p>}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {group.sources.map((source) => (
+                      <label key={source} className="flex items-center space-x-2 rounded-md border border-gray-200 px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={settings.sources[source] ?? false}
+                          onChange={() => toggleSource(source)}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        />
+                        <span className="text-sm text-gray-800 capitalize">{source.replace(/_/g, ' ')}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>

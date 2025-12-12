@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { fetchJobs, triggerRescan, Job, CrawlResult } from '@/lib/api';
+import { fetchJobs, triggerRescan, fetchRuns, Job, CrawlResult, CrawlRun } from '@/lib/api';
 import JobCard from '@/components/JobCard';
 import FilterBar from '@/components/FilterBar';
 
@@ -13,6 +13,7 @@ export default function HomePage() {
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<CrawlResult | null>(null);
+  const [lastRun, setLastRun] = useState<CrawlRun | null>(null);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
@@ -20,6 +21,7 @@ export default function HomePage() {
 
   useEffect(() => {
     loadJobs();
+    loadLastRun();
   }, []);
 
   useEffect(() => {
@@ -37,6 +39,15 @@ export default function HomePage() {
       console.error('Error loading jobs:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadLastRun = async () => {
+    try {
+      const runs = await fetchRuns({ limit: 1 });
+      setLastRun(runs[0] || null);
+    } catch (err) {
+      console.error('Error loading runs:', err);
     }
   };
 
@@ -72,6 +83,7 @@ export default function HomePage() {
       const result = await triggerRescan();
       setScanResult(result);
       await loadJobs();
+      await loadLastRun();
     } catch (err) {
       setError('Failed to trigger rescan. Make sure the backend is running.');
       console.error('Error triggering rescan:', err);
@@ -175,6 +187,21 @@ export default function HomePage() {
             Sorted by relevance score
           </div>
         </div>
+
+        {lastRun && (
+          <div className="mb-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+            <div className="flex justify-between items-center">
+              <div>
+                <p className="text-sm text-gray-600">Last Crawl</p>
+                <p className="text-lg font-semibold text-gray-900">{new Date(lastRun.started_at).toLocaleString()}</p>
+                <p className="text-sm text-gray-600">Inserted {lastRun.inserted_new_count} / Fetched {lastRun.fetched_count}</p>
+              </div>
+              <div className="text-sm text-gray-600">
+                Failures: {lastRun.sources_failed.length}
+              </div>
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex justify-center items-center py-12">

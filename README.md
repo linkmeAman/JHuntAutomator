@@ -64,7 +64,9 @@ Set `NEXT_PUBLIC_API_URL` if the backend is not at `http://localhost:8000`.
 ### Notes
 - Default DB: `jobs.db` (SQLite). Adjust `DATABASE_URL` as needed.
 - Profile text: `PROFILE_TEXT` or `PROFILE_TEXT_PATH`.
-- Source flags defaults: `ENABLE_INDEED=false`, `ENABLE_REMOTEOK=true`, `ENABLE_WEWORKREMOTELY=true`, `ENABLE_GREENHOUSE=true`.
+- Source flags defaults: `ENABLE_INDEED=false`, `ENABLE_REMOTEOK=true`, `ENABLE_WEWORKREMOTELY=true`, `ENABLE_GREENHOUSE=true`, `ENABLE_REMOTIVE=true`, `ENABLE_WORKINGNOMADS=true`, `ENABLE_REMOTE_CO=true`. India portals (`ENABLE_NAUKRI`, `ENABLE_SHINE`, `ENABLE_TIMESJOBS`) default off.
+- India mode: toggle via settings or `INDIA_MODE=true` to bias toward India portals (manual overrides still allowed).
+- LinkedIn: `ENABLE_LINKEDIN=false` by default. Email-alert ingestion recommended; whitelisted crawl requires explicit permission (see docs/linkedin.md).
 - Keep secrets only in env vars or GitHub Actions encrypted secrets—never commit them.
 
 ## NLP Relevance Scoring
