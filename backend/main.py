@@ -13,8 +13,26 @@ from .config import settings
 from .scheduler import start_scheduler
 from .crawl_runner import execute_crawl
 from .api_debug import router as debug_router
+from backend.crawl_engine.state import SourceState, get_cursor
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging to both console and file for crawl diagnostics
+log_dir = "logs"
+log_file = f"{log_dir}/app.log"
+try:
+    import os
+    os.makedirs(log_dir, exist_ok=True)
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler(log_file, encoding="utf-8")
+            ],
+        )
+except Exception:
+    logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="IT Job Search System", version="1.0.0")
@@ -119,6 +137,37 @@ def init_default_settings(db: Session):
             value=json.dumps({"hour": settings.CRAWL_SCHEDULE_HOUR, "minute": settings.CRAWL_SCHEDULE_MINUTE})
         )
         db.add(schedule_setting)
+
+@app.get("/api/sources/state")
+async def get_sources_state(db: Session = Depends(get_db)):
+    states = db.query(SourceState).all()
+    latest_run = (
+        db.query(CrawlRun)
+        .order_by(CrawlRun.started_at.desc())
+        .first()
+    )
+    metrics = {}
+    if latest_run and latest_run.source_metrics:
+        try:
+            metrics = json.loads(latest_run.source_metrics)
+        except Exception:
+            metrics = {}
+    result = []
+    for state in states:
+        cursor = get_cursor(state)
+        result.append(
+            {
+                "source_id": state.source_id,
+                "last_success_at": state.last_success_at,
+                "cooldown_until": state.cooldown_until,
+                "consecutive_failures": state.consecutive_failures,
+                "last_max_post_date_seen": cursor.get("last_max_post_date_seen"),
+                "http_cache": cursor.get("http_cache"),
+                "cursor": cursor,
+                "last_metrics": metrics.get(state.source_id, {}),
+            }
+        )
+    return result
 
     greenhouse_setting = db.query(SettingsModel).filter(SettingsModel.key == "greenhouse_boards").first()
     if greenhouse_setting and greenhouse_setting.value:

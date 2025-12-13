@@ -16,6 +16,7 @@ async def debug_run(
     sources = payload.get("sources")
     max_pages = payload.get("max_pages")
     dry_run = payload.get("dry_run", True)
+    ignore_cooldown = payload.get("ignore_cooldown", False)
     if sources and not isinstance(sources, dict):
         sources_dict = {name: True for name in sources}
     else:
@@ -26,5 +27,6 @@ async def debug_run(
         dry_run=dry_run,
         override_sources=sources_dict,
         max_pages=max_pages,
+        ignore_cooldown=ignore_cooldown,
     )
     return result

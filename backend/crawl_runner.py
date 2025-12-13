@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import List, Tuple
 from uuid import uuid4
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from .config import settings
 from .crawler import JobCrawler
@@ -13,6 +13,7 @@ from .models import CrawlRun, Job, Settings as SettingsModel
 from .nlp import get_nlp_scorer
 from .notifications import NotificationService
 from .schemas import CrawlResult, JobCreate
+from .database import ensure_schema
 from .sources import (
     remotive,
     workingnomads,
@@ -102,13 +103,101 @@ def execute_crawl(
     override_sources: dict | None = None,
     max_pages: int | None = None,
     min_store_score: float | None = None,
+    ignore_cooldown: bool = False,
 ) -> CrawlResult:
     """Run the crawler pipeline once."""
-    keywords, locations, sources, greenhouse_boards = _load_runtime_settings(db)
-    if override_sources:
-        merged = sources.copy()
-        merged.update(override_sources)
-        sources = merged
+    if override_sources is not None:
+        # For explicit overrides (tests/dev), avoid merging stored/default sources.
+        keywords = settings.DEFAULT_KEYWORDS
+        locations = settings.DEFAULT_LOCATIONS
+        sources = override_sources
+        greenhouse_boards = settings.GREENHOUSE_BOARDS
+    else:
+        keywords, locations, sources, greenhouse_boards = _load_runtime_settings(db)
+
+    if settings.CRAWL_ENGINE.lower() == "v2":
+        # New engine path
+        from backend.crawl_engine.engine import run_engine_v2
+        from backend.crawl_engine.state import ensure_state_table
+
+        # Ensure source_state exists for the active database bind
+        ensure_state_table(db.bind)
+        # Ensure schema/indexes (job_key unique) exist for the active bind
+        ensure_schema(db.bind)
+
+        run_id = str(uuid4())
+        run_started_at = datetime.now(timezone.utc)
+        before_count = db.query(Job).count()
+
+        run_entry = CrawlRun(
+            run_id=run_id,
+            started_at=run_started_at,
+            sources_attempted=json.dumps(list(sources.keys())),
+            sources_succeeded=json.dumps([]),
+            sources_failed=json.dumps([]),
+            source_metrics=None,
+            fetched_count=0,
+            inserted_new_count=0,
+        )
+        db.add(run_entry)
+        db.commit()
+
+        metrics = run_engine_v2(
+            db,
+            sources_enabled=sources,
+            source_functions={
+                "remoteok": lambda: JobCrawler(keywords, locations, settings.MAX_JOBS_PER_SOURCE).crawl_remoteok(),
+                "weworkremotely": lambda: JobCrawler(keywords, locations, settings.MAX_JOBS_PER_SOURCE).crawl_weworkremotely_rss(),
+                "indeed": lambda: JobCrawler(keywords, locations, settings.MAX_JOBS_PER_SOURCE).crawl_indeed(),
+                "greenhouse": lambda: JobCrawler(keywords, locations, settings.MAX_JOBS_PER_SOURCE).crawl_greenhouse_boards(),
+                "remotive": lambda: remotive.fetch_jobs(settings),
+                "workingnomads": lambda: workingnomads.fetch_jobs(settings),
+                "remote_co": lambda: remote_co.fetch_jobs(settings),
+                "naukri": lambda: naukri.fetch_jobs(settings),
+                "shine": lambda: shine.fetch_jobs(settings),
+                "timesjobs": lambda: timesjobs.fetch_jobs(settings),
+                "glassdoor": lambda: glassdoor.fetch_jobs(settings),
+                "wellfound": lambda: wellfound.fetch_jobs(settings),
+                "yc": lambda: yc.fetch_jobs(settings),
+                "linkedin": lambda: linkedin.fetch_jobs(settings),
+            },
+            ignore_cooldown=ignore_cooldown,
+            session_maker=sessionmaker(bind=db.bind),
+        )
+        # aggregate
+        fetched = sum(m.get("jobs_parsed_count", 0) for m in metrics.values())
+        inserted = sum(m.get("jobs_inserted_count", 0) for m in metrics.values())
+        # fallback to actual DB delta to ensure accurate jobs_added
+        after_count = db.query(Job).count()
+        actual_inserted = max(0, after_count - before_count)
+        if actual_inserted != inserted:
+            inserted = actual_inserted
+        sources_failed = [
+            {"source": src, "error": "; ".join(m.get("errors", []))}
+            for src, m in metrics.items()
+            if m.get("errors")
+        ]
+        sources_succeeded = [
+            src for src in sources.keys() if src in metrics and not metrics[src].get("errors")
+        ]
+        run_entry.finished_at = datetime.now(timezone.utc)
+        run_entry.duration_ms = int((run_entry.finished_at - run_started_at).total_seconds() * 1000)
+        run_entry.fetched_count = fetched
+        run_entry.inserted_new_count = inserted
+        run_entry.source_metrics = json.dumps(metrics)
+        run_entry.sources_succeeded = json.dumps(sources_succeeded)
+        run_entry.sources_failed = json.dumps(sources_failed)
+        db.add(run_entry)
+        db.commit()
+        return CrawlResult(
+            status="success",
+            jobs_found=fetched,
+            jobs_added=inserted,
+            message=f"Found {fetched} jobs, added {inserted} new jobs",
+            run_id=run_id,
+        )
+
+    # Legacy path (v1)
     nlp_scorer = get_nlp_scorer()
 
     run_id = str(uuid4())

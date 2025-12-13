@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { fetchSettings, updateSettings, fetchRuns, Settings, CrawlRun } from '@/lib/api';
+import { fetchSettings, updateSettings, fetchRuns, fetchSourceStates, Settings, CrawlRun, SourceStateView } from '@/lib/api';
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -13,6 +13,9 @@ export default function SettingsPage() {
   const [runs, setRuns] = useState<CrawlRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(true);
   const [runsError, setRunsError] = useState<string | null>(null);
+  const [sourceStates, setSourceStates] = useState<SourceStateView[]>([]);
+  const [sourceStatesLoading, setSourceStatesLoading] = useState(true);
+  const [sourceStatesError, setSourceStatesError] = useState<string | null>(null);
   
   const [newKeyword, setNewKeyword] = useState('');
   const [newLocation, setNewLocation] = useState('');
@@ -23,6 +26,7 @@ export default function SettingsPage() {
   useEffect(() => {
     loadSettings();
     loadRuns();
+    loadSourceStates();
   }, []);
 
   const loadSettings = async () => {
@@ -58,6 +62,20 @@ export default function SettingsPage() {
       console.error('Error loading runs:', err);
     } finally {
       setRunsLoading(false);
+    }
+  };
+
+  const loadSourceStates = async () => {
+    try {
+      setSourceStatesLoading(true);
+      setSourceStatesError(null);
+      const data = await fetchSourceStates();
+      setSourceStates(data);
+    } catch (err) {
+      setSourceStatesError('Failed to load source health');
+      console.error('Error loading source states:', err);
+    } finally {
+      setSourceStatesLoading(false);
     }
   };
 
@@ -572,6 +590,65 @@ export default function SettingsPage() {
             <p className="mt-2 text-sm text-gray-500">
               Daily crawl will run at {settings.crawl_hour.toString().padStart(2, '0')}:{settings.crawl_minute.toString().padStart(2, '0')}
             </p>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Source Health</h2>
+                <p className="text-sm text-gray-600">Cooldowns, cursors, and last metrics</p>
+              </div>
+              <button
+                onClick={loadSourceStates}
+                className="px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100"
+              >
+                Refresh
+              </button>
+            </div>
+            {sourceStatesError && (
+              <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                {sourceStatesError}
+              </div>
+            )}
+            {sourceStatesLoading ? (
+              <div className="flex justify-center items-center py-6">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+              </div>
+            ) : sourceStates.length === 0 ? (
+              <p className="text-sm text-gray-600">No source state records yet.</p>
+            ) : (
+              <div className="overflow-auto">
+                <table className="min-w-full text-sm text-left text-gray-700">
+                  <thead>
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">Source</th>
+                      <th className="px-3 py-2 font-semibold">Last Success</th>
+                      <th className="px-3 py-2 font-semibold">Cooldown Until</th>
+                      <th className="px-3 py-2 font-semibold">Last Max Post Date</th>
+                      <th className="px-3 py-2 font-semibold">Dedup Ratio Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sourceStates.map((state) => {
+                      const metrics = state.last_metrics || {};
+                      const errors: string[] = metrics.errors || [];
+                      const stopNote = errors.find((e) => e.includes('stop_on_seen_ratio'));
+                      return (
+                        <tr key={state.source_id} className="border-t border-gray-200">
+                          <td className="px-3 py-2 font-semibold text-gray-900">{state.source_id}</td>
+                          <td className="px-3 py-2">{state.last_success_at ? new Date(state.last_success_at).toLocaleString() : '—'}</td>
+                          <td className="px-3 py-2 text-red-600">
+                            {state.cooldown_until ? new Date(state.cooldown_until).toLocaleString() : '—'}
+                          </td>
+                          <td className="px-3 py-2">{state.last_max_post_date_seen || '—'}</td>
+                          <td className="px-3 py-2 text-xs text-gray-600">{stopNote || '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-lg shadow-md p-6">

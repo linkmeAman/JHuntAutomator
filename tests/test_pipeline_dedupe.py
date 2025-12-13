@@ -36,8 +36,8 @@ def test_pipeline_dedupes_new_sources(tmp_path, monkeypatch):
     monkeypatch.setattr(remotive, "fetch_jobs", lambda settings: fixture_jobs)
     monkeypatch.setattr(crawl_runner, "get_nlp_scorer", lambda: None)
 
-    result1 = crawl_runner.execute_crawl(session, send_notifications=False)
-    result2 = crawl_runner.execute_crawl(session, send_notifications=False)
+    result1 = crawl_runner.execute_crawl(session, send_notifications=False, override_sources={"remotive": True})
+    result2 = crawl_runner.execute_crawl(session, send_notifications=False, override_sources={"remotive": True})
 
     assert result1.jobs_added == 1
     assert result2.jobs_added == 0

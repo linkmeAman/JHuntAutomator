@@ -1,8 +1,12 @@
 import logging
 from typing import List, Dict, Any
 from bs4 import BeautifulSoup
+import requests
+from requests.exceptions import SSLError, RequestException, Timeout
 
 from backend.http_client import get, SourceBlockedError
+from backend.crawl_engine.errors import SourceTLSCertError
+from backend.crawl_engine.query_utils import generate_queries
 
 SOURCE_ID = "timesjobs"
 logger = logging.getLogger(__name__)
@@ -39,16 +43,36 @@ def parse_jobs(html: str) -> List[Dict[str, Any]]:
 
 
 def fetch_jobs(settings) -> List[Dict[str, Any]]:
-    query = (settings.DEFAULT_KEYWORDS[0] if settings.DEFAULT_KEYWORDS else "software").replace(" ", "-")
-    url = f"https://www.timesjobs.com/candidate/job-search.html?searchType=personalizedSearch&from=submit&txtKeywords={query}"
-    try:
-        resp = get(url)
-        if resp.status_code != 200:
-            logger.warning("TimesJobs responded with %s", resp.status_code)
-            return []
-        return parse_jobs(resp.text)
-    except SourceBlockedError as exc:
-        logger.warning("TimesJobs blocked: %s", exc)
-    except Exception as exc:
-        logger.error("TimesJobs fetch failed: %s", exc)
-    return []
+    queries = generate_queries(
+        settings.DEFAULT_KEYWORDS,
+        settings.INDIA_MODE,
+        settings.CRAWL_MAX_QUERIES_PER_SOURCE,
+        settings.CRAWL_QUERY_VARIANTS,
+    )
+    results: List[Dict[str, Any]] = []
+    for query in queries:
+        search = query.replace(" ", "-")
+        url = f"https://www.timesjobs.com/candidate/job-search.html?searchType=personalizedSearch&from=submit&txtKeywords={search}"
+        try:
+            resp = get(url, timeout=(5, 10))
+            if resp.status_code != 200:
+                logger.warning("TimesJobs responded with %s", resp.status_code)
+                continue
+            results.extend(parse_jobs(resp.text))
+        except SourceBlockedError as exc:
+            logger.warning("TimesJobs blocked: %s", exc)
+            break
+        except SSLError as exc:
+            logger.error("TimesJobs SSL error: %s", exc)
+            raise SourceTLSCertError(str(exc))
+        except (Timeout, RequestException) as exc:
+            logger.error("TimesJobs fetch failed: %s", exc)
+            raise
+    deduped = []
+    seen = set()
+    for job in results:
+        if job["url"] in seen:
+            continue
+        seen.add(job["url"])
+        deduped.append(job)
+    return deduped

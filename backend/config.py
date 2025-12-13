@@ -34,6 +34,12 @@ class Settings:
         self.REQUEST_DELAY_MS_MIN: int = int(os.getenv("REQUEST_DELAY_MS_MIN", "600"))
         self.REQUEST_DELAY_MS_MAX: int = int(os.getenv("REQUEST_DELAY_MS_MAX", "1200"))
         self.SCRAPE_MAX_PAGES: int = int(os.getenv("SCRAPE_MAX_PAGES", "3"))
+        self.CRAWL_ENGINE: str = os.getenv("CRAWL_ENGINE", "v2")
+        self.CRAWL_LOOKBACK_DAYS: int = int(os.getenv("CRAWL_LOOKBACK_DAYS", "7"))
+        self.CRAWL_LOOKBACK_BUFFER_DAYS: int = int(os.getenv("CRAWL_LOOKBACK_BUFFER_DAYS", "1"))
+        self.CRAWL_STOP_ON_SEEN_RATIO: float = float(os.getenv("CRAWL_STOP_ON_SEEN_RATIO", "0.85"))
+        self.CRAWL_MAX_QUERIES_PER_SOURCE: int = int(os.getenv("CRAWL_MAX_QUERIES_PER_SOURCE", "3"))
+        self.CRAWL_QUERY_VARIANTS: int = int(os.getenv("CRAWL_QUERY_VARIANTS", "3"))
         
         self.JOB_SOURCES: dict = {
             "indeed": _as_bool(os.getenv("ENABLE_INDEED"), False),
@@ -106,6 +112,7 @@ class Settings:
             "max_pages": int(os.getenv("LINKEDIN_MAX_PAGES", "2")),
             "min_delay_sec": int(os.getenv("LINKEDIN_MIN_DELAY_SEC", "3")),
         }
+        self.CA_BUNDLE_PATH: str | None = os.getenv("CA_BUNDLE_PATH")
 
     def _parse_greenhouse_boards(self, boards_value: str | None) -> List[dict]:
         if not boards_value:

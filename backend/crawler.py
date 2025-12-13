@@ -11,6 +11,7 @@ from .config import settings
 from .models import Job
 from .nlp import NLPScorer
 from .schemas import JobCreate
+from backend.crawl_engine.errors import SourceBadConfigError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -210,6 +211,9 @@ class JobCrawler:
             try:
                 response = requests.get(api_url, headers=headers, timeout=10)
                 if response.status_code != 200:
+                    if response.status_code == 404:
+                        logger.warning("Greenhouse board %s invalid (404)", board_name)
+                        raise SourceBadConfigError(f"Greenhouse board invalid: {board_name}")
                     logger.warning("Greenhouse board %s responded with %s", board_name, response.status_code)
                     continue
 

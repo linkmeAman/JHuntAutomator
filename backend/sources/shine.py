@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 from bs4 import BeautifulSoup
 
 from backend.http_client import get, SourceBlockedError
+from backend.crawl_engine.query_utils import generate_queries
 
 SOURCE_ID = "shine"
 logger = logging.getLogger(__name__)
@@ -39,16 +40,32 @@ def parse_jobs(html: str) -> List[Dict[str, Any]]:
 
 
 def fetch_jobs(settings) -> List[Dict[str, Any]]:
-    query = (settings.DEFAULT_KEYWORDS[0] if settings.DEFAULT_KEYWORDS else "software").replace(" ", "-")
-    url = f"https://www.shine.com/job-search/{query}-jobs"
-    try:
-        resp = get(url)
-        if resp.status_code != 200:
-            logger.warning("Shine responded with %s", resp.status_code)
-            return []
-        return parse_jobs(resp.text)
-    except SourceBlockedError as exc:
-        logger.warning("Shine blocked: %s", exc)
-    except Exception as exc:
-        logger.error("Shine fetch failed: %s", exc)
-    return []
+    queries = generate_queries(
+        settings.DEFAULT_KEYWORDS,
+        settings.INDIA_MODE,
+        settings.CRAWL_MAX_QUERIES_PER_SOURCE,
+        settings.CRAWL_QUERY_VARIANTS,
+    )
+    results: List[Dict[str, Any]] = []
+    for query in queries:
+        search = query.replace(" ", "-")
+        url = f"https://www.shine.com/job-search/{search}-jobs"
+        try:
+            resp = get(url)
+            if resp.status_code != 200:
+                logger.warning("Shine responded with %s", resp.status_code)
+                continue
+            results.extend(parse_jobs(resp.text))
+        except SourceBlockedError as exc:
+            logger.warning("Shine blocked: %s", exc)
+            break
+        except Exception as exc:
+            logger.error("Shine fetch failed: %s", exc)
+    deduped = []
+    seen = set()
+    for job in results:
+        if job["url"] in seen:
+            continue
+        seen.add(job["url"])
+        deduped.append(job)
+    return deduped

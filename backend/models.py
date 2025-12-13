@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, Float, DateTime
+from sqlalchemy import Column, Integer, String, Text, Boolean, Float, DateTime, event
 from sqlalchemy.sql import func
 from .database import Base
 import hashlib
@@ -10,7 +10,7 @@ class Job(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     job_hash = Column(String, unique=True, index=True)
-    job_key = Column(String, unique=True, index=True)
+    job_key = Column(String, unique=True, index=True, nullable=False)
     title = Column(String, index=True)
     company = Column(String, index=True)
     location = Column(String)
@@ -26,6 +26,8 @@ class Job(Base):
     keywords_matched = Column(String, nullable=True)
     applied = Column(Boolean, default=False)
     notes = Column(Text, nullable=True)
+    job_fingerprint = Column(String, nullable=True)
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
@@ -67,6 +69,27 @@ class Job(Base):
         # kept for backward compatibility, now delegates to generate_key
         return Job.generate_key(title, company, url, source, post_date, location)
 
+
+@event.listens_for(Job, "before_insert", propagate=True)
+def _set_job_keys(mapper, connection, target: Job):  # pragma: no cover - invoked by SQLAlchemy
+    if not target.job_key:
+        target.job_key = Job.generate_key(
+            target.title or "",
+            target.company or "",
+            target.url or "",
+            target.source or "",
+            target.post_date,
+            target.location,
+        )
+    if not target.job_hash:
+        target.job_hash = Job.generate_hash(
+            target.title or "",
+            target.company or "",
+            target.url or "",
+            target.source or "",
+            target.post_date,
+            target.location,
+        )
 
 class Settings(Base):
     __tablename__ = "settings"

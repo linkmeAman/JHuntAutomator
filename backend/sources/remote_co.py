@@ -1,8 +1,10 @@
 import logging
 from typing import List, Dict, Any
 from bs4 import BeautifulSoup
+from requests.exceptions import RequestException, Timeout
 
 from backend.http_client import get, SourceBlockedError
+from backend.crawl_engine.errors import SourceTransientNetworkError
 
 SOURCE_ID = "remote_co"
 logger = logging.getLogger(__name__)
@@ -43,13 +45,14 @@ def parse_jobs(html: str) -> List[Dict[str, Any]]:
 def fetch_jobs(settings) -> List[Dict[str, Any]]:
     url = "https://remote.co/remote-jobs/developer/"
     try:
-        resp = get(url)
+        resp = get(url, timeout=(5, 15))
         if resp.status_code != 200:
             logger.warning("Remote.co responded with %s", resp.status_code)
             return []
         return parse_jobs(resp.text)
     except SourceBlockedError as exc:
         logger.warning("Remote.co blocked: %s", exc)
-    except Exception as exc:
+    except (Timeout, RequestException) as exc:
         logger.error("Remote.co fetch failed: %s", exc)
+        raise SourceTransientNetworkError(str(exc))
     return []

@@ -70,6 +70,17 @@ export interface CrawlRun {
   errors_summary?: string;
 }
 
+export interface SourceStateView {
+  source_id: string;
+  last_success_at?: string;
+  cooldown_until?: string;
+  consecutive_failures?: number;
+  last_max_post_date_seen?: string;
+  http_cache?: Record<string, any>;
+  cursor?: Record<string, any>;
+  last_metrics?: Record<string, any>;
+}
+
 export const fetchJobs = async (params?: {
   q?: string;
   location?: string;
@@ -115,6 +126,11 @@ export const fetchStats = async (): Promise<Stats> => {
 
 export const fetchRuns = async (params?: { limit?: number; offset?: number }): Promise<CrawlRun[]> => {
   const response = await api.get('/api/runs', { params });
+  return response.data;
+};
+
+export const fetchSourceStates = async (): Promise<SourceStateView[]> => {
+  const response = await api.get('/api/sources/state');
   return response.data;
 };
 

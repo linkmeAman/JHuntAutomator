@@ -45,7 +45,7 @@ def test_execute_crawl_creates_run_record(tmp_path, monkeypatch):
         lambda self: [_stub_job("RemoteOK")],
     )
 
-    result = crawl_runner.execute_crawl(session, send_notifications=False)
+    result = crawl_runner.execute_crawl(session, send_notifications=False, override_sources={"remoteok": True})
 
     assert result.jobs_added == 1
     runs = session.query(CrawlRun).all()
@@ -72,7 +72,7 @@ def test_execute_crawl_records_failed_source(tmp_path, monkeypatch):
         lambda self: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
-    crawl_runner.execute_crawl(session, send_notifications=False)
+    crawl_runner.execute_crawl(session, send_notifications=False, override_sources={"remoteok": True, "greenhouse": True})
 
     run = session.query(CrawlRun).first()
     failures = json.loads(run.sources_failed)
