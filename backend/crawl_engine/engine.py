@@ -118,6 +118,11 @@ class EngineV2:
             dedup_count = 0
             inserted_count = 0
             for norm in normalized_payloads:
+                # Ensure keys/hashes are present and deterministic
+                if not norm.job_key or not norm.job_hash:
+                    k, h = compute_keys(norm.dict())
+                    norm.job_key = k
+                    norm.job_hash = h
                 if DEBUG_DEDUPE:
                     logger.info(
                         "DEDUPE_DEBUG source=%s key=%s url=%s canonical=%s",
@@ -126,11 +131,6 @@ class EngineV2:
                         norm.url,
                         canonical_url(norm.url),
                     )
-                # Ensure keys/hashes are present and deterministic
-                if not norm.job_key or not norm.job_hash:
-                    k, h = compute_keys(norm.dict())
-                    norm.job_key = k
-                    norm.job_hash = h
                 payload = norm.dict()
                 if payload.get("source_meta") is not None:
                     payload["source_meta"] = json.dumps(payload["source_meta"])
@@ -142,6 +142,7 @@ class EngineV2:
                     self.db.flush()
                     inserted_count += 1
                 except IntegrityError:
+                    # Already exists: update last_seen and, if fingerprint changed, fields.
                     self.db.rollback()
                     existing = self.db.query(Job).filter(Job.job_key == norm.job_key).first()
                     if existing:
@@ -197,12 +198,14 @@ class EngineV2:
         await self.fetcher.close()
 
     def _compute_since(self, cursor: dict) -> datetime:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         lookback = now - timedelta(days=settings.CRAWL_LOOKBACK_DAYS)
         last_seen = None
         if cursor.get("last_max_post_date_seen"):
             try:
                 last_seen = datetime.fromisoformat(cursor["last_max_post_date_seen"])
+                if last_seen.tzinfo is None:
+                    last_seen = last_seen.replace(tzinfo=timezone.utc)
             except Exception:
                 last_seen = None
         if last_seen:
